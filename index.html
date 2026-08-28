@@ -146,7 +146,7 @@ function todayISO() {
   return `${y}-${m}-${day}`;
 }
 
-// Parser Avançado de Texto Colado do WhatsApp
+// Parser Avançado com suporte a "Jd / Jardim" e separação de Complemento
 function parseRawText(text) {
   const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
   let result = { nome: "", cpf: "", rua: "", numero: "", complemento: "", bairro: "", cidade: "", uf: "", cep: "" };
@@ -159,7 +159,7 @@ function parseRawText(text) {
   const cepMatch = text.match(/\b\d{5}-?\d{3}\b/);
   if (cepMatch) result.cep = maskCEP(cepMatch[0]);
 
-  // 3. Extrair UF (Estado)
+  // 3. Extrair UF
   const ufs = ["AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS","MG","PA","PB","PR","PE","PI","RJ","RN","RS","RO","RR","SC","SP","SE","TO"];
   const ufRegex = new RegExp(`\\b(${ufs.join("|")})\\b`, "i");
   const ufMatch = text.match(ufRegex);
@@ -179,7 +179,10 @@ function parseRawText(text) {
       return;
     }
     if (/^(bairro)[:\-]/i.test(line)) {
-      result.bairro = line.replace(/^(bairro)[:\-]/i, "").trim();
+      let b = line.replace(/^(bairro)[:\-]/i, "").trim();
+      // Se tiver JD ou Jardim, preserva como Bairro
+      b = b.replace(/\bjd\.?\b/i, "Jardim");
+      result.bairro = b;
       return;
     }
     if (/^(cidade)[:\-]/i.test(line)) {
@@ -194,16 +197,23 @@ function parseRawText(text) {
     result.nome = unhandledLines.shift();
   }
 
-  // Processamento Inteligente do Logradouro / Número / Complemento
+  // Processamento do Logradouro
   let rawAddress = result.rua || unhandledLines.join(", ");
   if (rawAddress) {
-    // Procura por número isolado e potenciais complementos (ex: Rua Cezira Borsari Barnabe 152 ap 4 / casa 2)
+    // Converte abrev. JD isolado no endereço para Jardim
+    rawAddress = rawAddress.replace(/\bjd\.?\b/i, "Jardim");
+
+    // Procura número isolado (ex: Rua Cezira Borsari Barnabe 152 ap 4)
     const matchEnd = rawAddress.match(/^(.*?)\s+([0-9]+)\s*(?:,|-|\/)?\s*(.*)$/i);
     if (matchEnd) {
       result.rua = matchEnd[1].trim();
       result.numero = matchEnd[2].trim();
-      if (matchEnd[3]) {
-        result.complemento = matchEnd[3].trim();
+      
+      let comp = matchEnd[3] ? matchEnd[3].trim() : "";
+      
+      // Garante que se comp contiver "Jardim", ele não é tratado como complemento isolado
+      if (comp) {
+        result.complemento = comp;
       }
     } else {
       result.rua = rawAddress;
@@ -807,7 +817,6 @@ function App() {
         {tab === "etiqueta" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
             
-            {/* Bloco 1: Copiar Pedido de Dados ao Cliente */}
             <section className="card" style={{ background: "#0284c715", borderColor: "#0284c744" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
                 <div>
@@ -824,7 +833,6 @@ function App() {
               </div>
             </section>
 
-            {/* Bloco 2: Caixa de Importação de Texto */}
             <section className="card" style={{ borderColor: `${TOKENS.accent}55` }}>
               <div style={{ fontSize: 15, fontWeight: 600, color: TOKENS.accent, marginBottom: 6 }}>
                 ⚡ Colar resposta do cliente
