@@ -63,6 +63,15 @@ const DEZENAS = ["","","vinte","trinta","quarenta","cinquenta","sessenta","seten
 const CENTENAS = ["","cento","duzentos","trezentos","quatrocentos","quinhentos","seiscentos","setecentos","oitocentos","novecentos"];
 const MESES = ["janeiro","fevereiro","março","abril","maio","junho","julho","agosto","setembro","outubro","novembro","dezembro"];
 
+const MENSAGEM_PADRAO_CLIENTE = `Olá! Para enviar seu pedido e emitir seu recibo, por favor me envie seus dados abaixo:
+
+- Nome completo:
+- CPF:
+- CEP:
+- Endereço (Rua, Número e Complemento se houver):
+- Bairro:
+- Cidade / UF:`;
+
 function tresDigitos(n) {
   if (n === 0) return "";
   if (n === 100) return "cem";
@@ -137,48 +146,42 @@ function todayISO() {
   return `${y}-${m}-${day}`;
 }
 
-// Função de Extração de Texto Colado (Parser para WhatsApp)
+// Parser Avançado de Texto Colado do WhatsApp
 function parseRawText(text) {
   const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
   let result = { nome: "", cpf: "", rua: "", numero: "", complemento: "", bairro: "", cidade: "", uf: "", cep: "" };
 
-  // 1. Buscar CPF
+  // 1. Extrair CPF
   const cpfMatch = text.match(/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/);
   if (cpfMatch) result.cpf = maskCPF(cpfMatch[0]);
 
-  // 2. Buscar CEP
+  // 2. Extrair CEP
   const cepMatch = text.match(/\b\d{5}-?\d{3}\b/);
   if (cepMatch) result.cep = maskCEP(cepMatch[0]);
 
-  // 3. Buscar UF (Estado)
+  // 3. Extrair UF (Estado)
   const ufs = ["AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS","MG","PA","PB","PR","PE","PI","RJ","RN","RS","RO","RR","SC","SP","SE","TO"];
   const ufRegex = new RegExp(`\\b(${ufs.join("|")})\\b`, "i");
   const ufMatch = text.match(ufRegex);
   if (ufMatch) result.uf = ufMatch[0].toUpperCase();
 
-  // 4. Analisar Linhas para Nome e Endereço
   let unhandledLines = [];
   lines.forEach(line => {
-    // Ignora linhas que contêm apenas CPF ou CEP
     if (cpfMatch && line.includes(cpfMatch[0])) return;
     if (cepMatch && line.includes(cepMatch[0])) return;
 
-    // Tenta identificar Nome (Normalmente rotulado ou a primeira linha sem números)
     if (/^(nome|cliente|destinatario)[:\-]/i.test(line)) {
       result.nome = line.replace(/^(nome|cliente|destinatario)[:\-]/i, "").trim();
       return;
     }
-    // Tenta identificar Endereço / Rua
     if (/^(rua|end|endereço|avenida|av)[:\-]/i.test(line)) {
       result.rua = line.replace(/^(rua|end|endereço|avenida|av)[:\-]/i, "").trim();
       return;
     }
-    // Tenta identificar Bairro
     if (/^(bairro)[:\-]/i.test(line)) {
       result.bairro = line.replace(/^(bairro)[:\-]/i, "").trim();
       return;
     }
-    // Tenta identificar Cidade
     if (/^(cidade)[:\-]/i.test(line)) {
       result.cidade = line.replace(/^(cidade)[:\-]/i, "").trim();
       return;
@@ -187,20 +190,24 @@ function parseRawText(text) {
     unhandledLines.push(line);
   });
 
-  // Se o nome não foi rotulado, assume que a primeira linha útil é o Nome
   if (!result.nome && unhandledLines.length > 0) {
     result.nome = unhandledLines.shift();
   }
 
-  // Se o endereço sobrou nas linhas não tratadas
-  if (!result.rua && unhandledLines.length > 0) {
-    let addLine = unhandledLines.join(", ");
-    // Tenta extrair número
-    const numMatch = addLine.match(/(?:nº|num|n°|n°|number|,)\s*(\d+)/i);
-    if (numMatch) {
-      result.numero = numMatch[1];
+  // Processamento Inteligente do Logradouro / Número / Complemento
+  let rawAddress = result.rua || unhandledLines.join(", ");
+  if (rawAddress) {
+    // Procura por número isolado e potenciais complementos (ex: Rua Cezira Borsari Barnabe 152 ap 4 / casa 2)
+    const matchEnd = rawAddress.match(/^(.*?)\s+([0-9]+)\s*(?:,|-|\/)?\s*(.*)$/i);
+    if (matchEnd) {
+      result.rua = matchEnd[1].trim();
+      result.numero = matchEnd[2].trim();
+      if (matchEnd[3]) {
+        result.complemento = matchEnd[3].trim();
+      }
+    } else {
+      result.rua = rawAddress;
     }
-    result.rua = addLine;
   }
 
   return result;
@@ -284,7 +291,7 @@ function EnderecoFields({ data, onChange, onBlur }) {
         </div>
         <div style={{ flex: 2 }}>
           <label className="field-label">Complemento</label>
-          <input className="field-input" value={data.complemento || ""} onChange={set("complemento")} onBlur={handleBlur} placeholder="Apto 4 (opcional)" />
+          <input className="field-input" value={data.complemento || ""} onChange={set("complemento")} onBlur={handleBlur} placeholder="Ap 101 / Casa 2 (opcional)" />
         </div>
       </div>
       <div>
@@ -601,7 +608,6 @@ function App() {
     if (!rawText.trim()) return;
     const extracted = parseRawText(rawText);
     
-    // Se extraiu CEP, busca endereço automaticamente no ViaCEP
     if (extracted.cep) {
       const digits = extracted.cep.replace(/\D/g, "");
       if (digits.length === 8) {
@@ -609,10 +615,10 @@ function App() {
           const resp = await fetch(`https://viacep.com.br/ws/${digits}/json/`);
           const json = await resp.json();
           if (!json.erro) {
-            extracted.rua = json.logradouro || extracted.rua;
-            extracted.bairro = json.bairro || extracted.bairro;
-            extracted.cidade = json.localidade || extracted.cidade;
-            extracted.uf = json.uf || extracted.uf;
+            extracted.rua = extracted.rua || json.logradouro;
+            extracted.bairro = extracted.bairro || json.bairro;
+            extracted.cidade = extracted.cidade || json.localidade;
+            extracted.uf = extracted.uf || json.uf;
           }
         } catch (e) {}
       }
@@ -622,6 +628,12 @@ function App() {
     saveClient(next);
     setRawText("");
     setFlashMsg("Dados colados e separados com sucesso!");
+    setTimeout(() => setFlashMsg(""), 1800);
+  };
+
+  const copyClientRequestText = () => {
+    navigator.clipboard.writeText(MENSAGEM_PADRAO_CLIENTE);
+    setFlashMsg("Mensagem copiada para a área de transferência!");
     setTimeout(() => setFlashMsg(""), 1800);
   };
 
@@ -795,20 +807,37 @@ function App() {
         {tab === "etiqueta" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
             
-            {/* Caixa de Importação de Texto do WhatsApp */}
+            {/* Bloco 1: Copiar Pedido de Dados ao Cliente */}
+            <section className="card" style={{ background: "#0284c715", borderColor: "#0284c744" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+                <div>
+                  <div style={{ fontSize: 14.5, fontWeight: 700, color: TOKENS.ink }}>
+                    💬 Pedir dados ao cliente no WhatsApp
+                  </div>
+                  <div style={{ fontSize: 12.5, color: TOKENS.inkMuted, marginTop: 2 }}>
+                    Copie a mensagem pronta e envie para o cliente preencher.
+                  </div>
+                </div>
+                <button className="btn-primary" onClick={copyClientRequestText} type="button" style={{ padding: "8px 14px", fontSize: 12.5 }}>
+                  Copiar mensagem
+                </button>
+              </div>
+            </section>
+
+            {/* Bloco 2: Caixa de Importação de Texto */}
             <section className="card" style={{ borderColor: `${TOKENS.accent}55` }}>
               <div style={{ fontSize: 15, fontWeight: 600, color: TOKENS.accent, marginBottom: 6 }}>
-                ⚡ Colar mensagem do WhatsApp
+                ⚡ Colar resposta do cliente
               </div>
               <div style={{ fontSize: 12.5, color: TOKENS.inkMuted, marginBottom: 10 }}>
-                Cole a mensagem recebida contendo Nome, CPF, CEP e Endereço. O app vai extrair e separar tudo nos campos abaixo.
+                Cole aqui o texto enviado pelo cliente. O app vai extrair Nome, CPF, CEP, Rua, Número e Complemento automaticamente.
               </div>
               <textarea
                 className="field-input"
                 rows={3}
                 value={rawText}
                 onChange={(e) => setRawText(e.target.value)}
-                placeholder="Cole o texto aqui..."
+                placeholder="Cole a resposta do WhatsApp aqui..."
                 style={{ resize: "vertical" }}
               />
               <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
