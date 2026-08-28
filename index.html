@@ -1,0 +1,985 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<title>EasyMount - Gestão de Vendas</title>
+<link rel="icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAHuklEQVR4nI2Xa4xdVRXHf2vtfe/cmTt3Ztop0860VEoLlEKovL4ZNCQVjSFBCUXkIxE+ADHEhEQxkphIRKLypSZoNNIQgwgkVYrGJhBNhBgeChJeFloL7ZRHaem87tx79lp+2OfcOzOdD57kzFnnzLn7/1//9ThrC/kIQBqePH+dSv12YrheQ9gmodaQGEVCDQkBCRE0ICqIKCCIgHu5ils+zfBUQEpghVtKbVI6qKQn5ud8z+z0Sx/DDQF+n6QCb05s26Wh/pDGuKUHFiISamiMEAKiAVFFNAAgIhnXAQFxBxfcMglSgVuCVOR7d6zoHlIvbvvw0L8OwA1BAJrrz786aDhAiCqqhYZaoPRcY8hENBNARfA0e1L2fL52/9S5+v3542/3f0I" />
+<link rel="apple-touch-icon" sizes="180x180" href="icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="EasyMount">
+<style>
+  html, body { margin: 0; padding: 0; background: #0f172a; color: #f8fafc; }
+  #boot-msg {
+    font-family: -apple-system, Inter, sans-serif; color: #94a3b8;
+    padding: 40px 20px; text-align: center; font-size: 14px; line-height: 1.6;
+  }
+  #boot-error {
+    display: none; font-family: -apple-system, Inter, sans-serif; color: #f87171;
+    background: #450a0a; border: 1px solid #ef444455; border-radius: 8px;
+    margin: 20px; padding: 16px; font-size: 13px; white-space: pre-wrap; word-break: break-word;
+  }
+</style>
+<script crossorigin src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.25.6/babel.min.js"></script>
+</head>
+<body>
+<div id="root"><div id="boot-msg">Carregando…</div></div>
+<div id="boot-error"></div>
+<script>
+  window.addEventListener("error", function (e) {
+    var box = document.getElementById("boot-error");
+    if (!box) return;
+    box.style.display = "block";
+    box.textContent = "Deu um erro ao carregar o app:\n" + (e.message || e.error || "erro desconhecido");
+  });
+</script>
+<script>
+  window.storage = {
+    async get(key) {
+      const raw = localStorage.getItem("easymount-app:" + key);
+      if (raw === null) throw new Error("not found");
+      return { key, value: raw, shared: false };
+    },
+    async set(key, value) {
+      localStorage.setItem("easymount-app:" + key, value);
+      return { key, value, shared: false };
+    },
+    async delete(key) {
+      localStorage.removeItem("easymount-app:" + key);
+      return { key, deleted: true, shared: false };
+    }
+  };
+</script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef, useCallback } = React;
+
+const UNIDADES = ["zero","um","dois","três","quatro","cinco","seis","sete","oito","nove"];
+const DEZ_A_DEZENOVE = ["dez","onze","doze","treze","catorze","quinze","dezesseis","dezessete","dezoito","dezenove"];
+const DEZENAS = ["","","vinte","trinta","quarenta","cinquenta","sessenta","setenta","oitenta","noventa"];
+const CENTENAS = ["","cento","duzentos","trezentos","quatrocentos","quinhentos","seiscentos","setecentos","oitocentos","novecentos"];
+const MESES = ["janeiro","fevereiro","março","abril","maio","junho","julho","agosto","setembro","outubro","novembro","dezembro"];
+
+function tresDigitos(n) {
+  if (n === 0) return "";
+  if (n === 100) return "cem";
+  const c = Math.floor(n / 100);
+  const resto = n % 100;
+  const partes = [];
+  if (c > 0) partes.push(CENTENAS[c]);
+  if (resto > 0) {
+    if (resto < 10) partes.push(UNIDADES[resto]);
+    else if (resto < 20) partes.push(DEZ_A_DEZENOVE[resto - 10]);
+    else {
+      const d = Math.floor(resto / 10);
+      const u = resto % 10;
+      partes.push(u > 0 ? `${DEZENAS[d]} e ${UNIDADES[u]}` : DEZENAS[d]);
+    }
+  }
+  return partes.join(" e ");
+}
+
+function numeroPorExtenso(num) {
+  if (num === 0) return "zero";
+  const milhar = Math.floor(num / 1000);
+  const resto = num % 1000;
+  const partes = [];
+  if (milhar > 0) partes.push(milhar === 1 ? "mil" : `${tresDigitos(milhar)} mil`);
+  if (resto > 0) partes.push(tresDigitos(resto));
+  const juntor = milhar > 0 && resto > 0 && resto < 100 ? " e " : " ";
+  return partes.join(juntor);
+}
+
+function valorPorExtenso(valor) {
+  const inteiro = Math.floor(valor);
+  const centavos = Math.round((valor - inteiro) * 100);
+  let texto = `${numeroPorExtenso(inteiro)} ${inteiro === 1 ? "real" : "reais"}`;
+  if (centavos > 0) {
+    texto += ` e ${numeroPorExtenso(centavos)} ${centavos === 1 ? "centavo" : "centavos"}`;
+  }
+  return texto;
+}
+
+function maskCEP(v) {
+  if (!v) return "";
+  v = v.replace(/\D/g, "").slice(0, 8);
+  v = v.replace(/(\d{5})(\d)/, "$1-$2");
+  return v;
+}
+
+function maskCPF(v) {
+  if (!v) return "";
+  v = v.replace(/\D/g, "").slice(0, 11);
+  v = v.replace(/(\d{3})(\d)/, "$1.$2");
+  v = v.replace(/(\d{3})(\d)/, "$1.$2");
+  v = v.replace(/(\d{3})(\d{1,2})$/, "$1-$2");
+  return v;
+}
+
+function centsToBRL(cents) {
+  return (cents / 100).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function formatDatePtBR(isoDate) {
+  if (!isoDate) return "";
+  const [y, m, d] = isoDate.split("-").map(Number);
+  return `${d} de ${MESES[m - 1]} de ${y}`;
+}
+
+function todayISO() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+// Função de Extração de Texto Colado (Parser para WhatsApp)
+function parseRawText(text) {
+  const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+  let result = { nome: "", cpf: "", rua: "", numero: "", complemento: "", bairro: "", cidade: "", uf: "", cep: "" };
+
+  // 1. Buscar CPF
+  const cpfMatch = text.match(/\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/);
+  if (cpfMatch) result.cpf = maskCPF(cpfMatch[0]);
+
+  // 2. Buscar CEP
+  const cepMatch = text.match(/\b\d{5}-?\d{3}\b/);
+  if (cepMatch) result.cep = maskCEP(cepMatch[0]);
+
+  // 3. Buscar UF (Estado)
+  const ufs = ["AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS","MG","PA","PB","PR","PE","PI","RJ","RN","RS","RO","RR","SC","SP","SE","TO"];
+  const ufRegex = new RegExp(`\\b(${ufs.join("|")})\\b`, "i");
+  const ufMatch = text.match(ufRegex);
+  if (ufMatch) result.uf = ufMatch[0].toUpperCase();
+
+  // 4. Analisar Linhas para Nome e Endereço
+  let unhandledLines = [];
+  lines.forEach(line => {
+    // Ignora linhas que contêm apenas CPF ou CEP
+    if (cpfMatch && line.includes(cpfMatch[0])) return;
+    if (cepMatch && line.includes(cepMatch[0])) return;
+
+    // Tenta identificar Nome (Normalmente rotulado ou a primeira linha sem números)
+    if (/^(nome|cliente|destinatario)[:\-]/i.test(line)) {
+      result.nome = line.replace(/^(nome|cliente|destinatario)[:\-]/i, "").trim();
+      return;
+    }
+    // Tenta identificar Endereço / Rua
+    if (/^(rua|end|endereço|avenida|av)[:\-]/i.test(line)) {
+      result.rua = line.replace(/^(rua|end|endereço|avenida|av)[:\-]/i, "").trim();
+      return;
+    }
+    // Tenta identificar Bairro
+    if (/^(bairro)[:\-]/i.test(line)) {
+      result.bairro = line.replace(/^(bairro)[:\-]/i, "").trim();
+      return;
+    }
+    // Tenta identificar Cidade
+    if (/^(cidade)[:\-]/i.test(line)) {
+      result.cidade = line.replace(/^(cidade)[:\-]/i, "").trim();
+      return;
+    }
+
+    unhandledLines.push(line);
+  });
+
+  // Se o nome não foi rotulado, assume que a primeira linha útil é o Nome
+  if (!result.nome && unhandledLines.length > 0) {
+    result.nome = unhandledLines.shift();
+  }
+
+  // Se o endereço sobrou nas linhas não tratadas
+  if (!result.rua && unhandledLines.length > 0) {
+    let addLine = unhandledLines.join(", ");
+    // Tenta extrair número
+    const numMatch = addLine.match(/(?:nº|num|n°|n°|number|,)\s*(\d+)/i);
+    if (numMatch) {
+      result.numero = numMatch[1];
+    }
+    result.rua = addLine;
+  }
+
+  return result;
+}
+
+const TOKENS = {
+  bg: "#0f172a",
+  card: "#1e293b",
+  ink: "#f8fafc",
+  inkMuted: "#94a3b8",
+  accent: "#38bdf8",
+  line: "#334155",
+  danger: "#f87171",
+  dangerSoft: "#450a0a",
+  success: "#34d399",
+  successSoft: "#064e3b",
+};
+
+function EnderecoFields({ data, onChange, onBlur }) {
+  const [buscando, setBuscando] = useState(false);
+  const [cepErro, setCepErro] = useState(false);
+  const set = (field) => (e) => onChange({ ...data, [field]: e.target.value });
+  const handleBlur = () => { if (onBlur) onBlur(data); };
+
+  const handleCepChange = async (e) => {
+    const masked = maskCEP(e.target.value);
+    let atual = { ...data, cep: masked };
+    onChange(atual);
+    setCepErro(false);
+    const digits = masked.replace(/\D/g, "");
+    if (digits.length === 8) {
+      setBuscando(true);
+      try {
+        const resp = await fetch(`https://viacep.com.br/ws/${digits}/json/`);
+        const json = await resp.json();
+        if (json.erro) {
+          setCepErro(true);
+        } else {
+          atual = {
+            ...atual,
+            rua: json.logradouro || atual.rua,
+            bairro: json.bairro || atual.bairro,
+            cidade: json.localidade || atual.cidade,
+            uf: json.uf || atual.uf,
+          };
+          onChange(atual);
+        }
+      } catch (err) {
+      } finally {
+        setBuscando(false);
+        if (onBlur) onBlur(atual);
+      }
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div>
+        <label className="field-label">Nome</label>
+        <input className="field-input" value={data.nome || ""} onChange={set("nome")} onBlur={handleBlur} placeholder="Nome completo" />
+      </div>
+      <div>
+        <label className="field-label">CPF</label>
+        <input className="field-input" value={data.cpf || ""} onChange={(e) => onChange({ ...data, cpf: maskCPF(e.target.value) })} onBlur={handleBlur} placeholder="000.000.000-00" inputMode="numeric" />
+      </div>
+      <div>
+        <label className="field-label">
+          CEP {buscando && <span style={{ color: TOKENS.inkMuted, fontWeight: 400, textTransform: "none" }}>· buscando…</span>}
+          {cepErro && <span style={{ color: TOKENS.danger, fontWeight: 400, textTransform: "none" }}>· CEP não encontrado</span>}
+        </label>
+        <input className="field-input" value={data.cep || ""} onChange={handleCepChange} onBlur={handleBlur} placeholder="00000-000" inputMode="numeric" />
+      </div>
+      <div>
+        <label className="field-label">Rua</label>
+        <input className="field-input" value={data.rua || ""} onChange={set("rua")} onBlur={handleBlur} placeholder="Rua Exemplo" />
+      </div>
+      <div style={{ display: "flex", gap: 10 }}>
+        <div style={{ flex: 1 }}>
+          <label className="field-label">Número</label>
+          <input className="field-input" value={data.numero || ""} onChange={set("numero")} onBlur={handleBlur} placeholder="123" />
+        </div>
+        <div style={{ flex: 2 }}>
+          <label className="field-label">Complemento</label>
+          <input className="field-input" value={data.complemento || ""} onChange={set("complemento")} onBlur={handleBlur} placeholder="Apto 4 (opcional)" />
+        </div>
+      </div>
+      <div>
+        <label className="field-label">Bairro</label>
+        <input className="field-input" value={data.bairro || ""} onChange={set("bairro")} onBlur={handleBlur} placeholder="Bairro" />
+      </div>
+      <div style={{ display: "flex", gap: 10 }}>
+        <div style={{ flex: 2 }}>
+          <label className="field-label">Cidade</label>
+          <input className="field-input" value={data.cidade || ""} onChange={set("cidade")} onBlur={handleBlur} placeholder="Cidade" />
+        </div>
+        <div style={{ flex: 1 }}>
+          <label className="field-label">UF</label>
+          <input className="field-input" value={data.uf || ""} onChange={(e) => onChange({ ...data, uf: e.target.value.toUpperCase().slice(0, 2) })} onBlur={handleBlur} placeholder="RS" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EnderecoTexto({ label, data }) {
+  const ruaNumero = [data.rua, data.numero].filter(Boolean).join(", ");
+  const linha1 = [ruaNumero, data.complemento].filter(Boolean).join(", ");
+  const linha2 = [data.cidade, data.uf].filter(Boolean).join(" - ");
+  return (
+    <div style={{ marginBottom: 15 }}>
+      <div style={{ fontSize: 8, letterSpacing: ".08em", textTransform: "uppercase", color: "#000", fontWeight: 700, marginBottom: 4 }}>
+        {label}
+      </div>
+      <div style={{ fontSize: 11, lineHeight: 1.6, color: "#000", textTransform: "uppercase" }}>
+        <div style={{ fontWeight: 700 }}>{data.nome || "________________"}</div>
+        {data.cpf && <div>CPF: {data.cpf}</div>}
+        <div>{linha1 || "________________"}</div>
+        <div>{data.bairro || "________________"}</div>
+        <div>{linha2 || "________________"}</div>
+        <div>CEP: {data.cep || "_____-___"}</div>
+      </div>
+    </div>
+  );
+}
+
+function SignaturePad({ initialDataUrl, onSave, ink }) {
+  const canvasRef = useRef(null);
+  const drawing = useRef(false);
+  const hasStroke = useRef(false);
+  const [empty, setEmpty] = useState(!initialDataUrl);
+  const getCtx = () => canvasRef.current.getContext("2d");
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const ctx = getCtx();
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = ink;
+    ctx.lineWidth = 2.4;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    if (initialDataUrl) {
+      const img = new Image();
+      img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      img.src = initialDataUrl;
+    }
+  }, []);
+
+  const pos = (e) => {
+    const rect = canvasRef.current.getBoundingClientRect();
+    const point = e.touches ? e.touches[0] : e;
+    return {
+      x: ((point.clientX - rect.left) / rect.width) * canvasRef.current.width,
+      y: ((point.clientY - rect.top) / rect.height) * canvasRef.current.height,
+    };
+  };
+
+  const start = (e) => {
+    if (e.cancelable) e.preventDefault();
+    drawing.current = true;
+    hasStroke.current = true;
+    setEmpty(false);
+    const { x, y } = pos(e);
+    const ctx = getCtx();
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+  };
+
+  const move = (e) => {
+    if (!drawing.current) return;
+    if (e.cancelable) e.preventDefault();
+    const { x, y } = pos(e);
+    const ctx = getCtx();
+    ctx.lineTo(x, y);
+    ctx.stroke();
+  };
+
+  const end = (e) => {
+    if (e && e.cancelable) e.preventDefault();
+    drawing.current = false;
+  };
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    canvas.addEventListener("touchstart", start, { passive: false });
+    canvas.addEventListener("touchmove", move, { passive: false });
+    canvas.addEventListener("touchend", end, { passive: false });
+    canvas.addEventListener("touchcancel", end, { passive: false });
+    return () => {
+      canvas.removeEventListener("touchstart", start);
+      canvas.removeEventListener("touchmove", move);
+      canvas.removeEventListener("touchend", end);
+      canvas.removeEventListener("touchcancel", end);
+    };
+  }, []);
+
+  const clear = () => {
+    const canvas = canvasRef.current;
+    const ctx = getCtx();
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    hasStroke.current = false;
+    setEmpty(true);
+  };
+
+  const save = () => {
+    if (empty) return;
+    onSave(canvasRef.current.toDataURL("image/png"));
+  };
+
+  const fileInputRef = useRef(null);
+  const handleFile = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = canvasRef.current;
+        const ctx = getCtx();
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        const scale = Math.min(canvas.width / img.width, canvas.height / img.height);
+        const w = img.width * scale;
+        const h = img.height * scale;
+        ctx.drawImage(img, (canvas.width - w) / 2, (canvas.height - h) / 2, w, h);
+        hasStroke.current = true;
+        setEmpty(false);
+        onSave(canvas.toDataURL("image/png"));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  };
+
+  return (
+    <div>
+      <canvas
+        ref={canvasRef}
+        width={520}
+        height={140}
+        style={{
+          width: "100%",
+          height: 120,
+          borderRadius: 6,
+          border: `1.5px dashed #334155`,
+          touchAction: "none",
+          cursor: "crosshair",
+          background: "#fff",
+        }}
+        onMouseDown={start}
+        onMouseMove={move}
+        onMouseUp={end}
+        onMouseLeave={end}
+      />
+      <input ref={fileInputRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleFile} />
+      <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+        <button className="btn-ghost" onClick={clear} type="button">Limpar</button>
+        <button className="btn-ghost" onClick={() => fileInputRef.current.click()} type="button">Foto salva</button>
+        <button className="btn-primary" onClick={save} type="button" disabled={empty}>Salvar assinatura</button>
+      </div>
+    </div>
+  );
+}
+
+function ReceiptDocument({ profile, form, signature, numeroRecibo, valorReais }) {
+  return (
+    <div style={{ color: "#0f172a", background: "#ffffff" }}>
+      <div style={{ height: 6, background: "#38bdf8" }} />
+      <div style={{ padding: "30px 34px" }}>
+        <div style={{ fontFamily: "Arial, Helvetica, sans-serif", fontSize: 20, fontWeight: 700, color: "#0f172a", marginBottom: 18 }}>
+          EasyMount
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", borderBottom: `2px solid #0f172a`, paddingBottom: 14, marginBottom: 20 }}>
+          <div>
+            <div style={{ fontSize: 11, letterSpacing: ".08em", textTransform: "uppercase", color: "#64748b", fontWeight: 700, marginBottom: 4 }}>
+              Recibo de pagamento
+            </div>
+            <div style={{ fontFamily: "'Space Mono', monospace", fontSize: 12, color: "#64748b" }}>
+              Nº {numeroRecibo}
+            </div>
+          </div>
+          <div style={{ fontFamily: "'Space Mono', monospace", fontSize: 18, fontWeight: 700, background: "#f0f9ff", color: "#0284c7", borderRadius: 6, padding: "6px 12px" }}>
+            {valorReais ? `R$ ${centsToBRL(parseInt(form.valueCents || "0", 10))}` : "R$ 0,00"}
+          </div>
+        </div>
+        <p style={{ fontSize: 15, lineHeight: 1.75, margin: "0 0 14px" }}>
+          Recebi de <strong>{form.payerName || "________________"}</strong> — CPF{" "}
+          <span style={{ fontFamily: "'Space Mono', monospace" }}>{form.payerCpf || "___.___.___-__"}</span>, a
+          importância de{" "}
+          <strong>{valorReais ? valorPorExtenso(valorReais) : "________________"}</strong>, referente a{" "}
+          <strong>{form.description || "________________"}</strong>.
+        </p>
+        <p style={{ fontSize: 15, lineHeight: 1.75, margin: "0 0 14px" }}>
+          Para maior clareza, firmo o presente recibo, que comprova o recebimento integral do valor
+          mencionado, concedendo <strong>quitação plena, geral e irrevogável</strong> pela quantia recebida.
+        </p>
+        {profile.pix && (
+          <p style={{ fontSize: 13.5, color: "#64748b", margin: "0 0 22px" }}>
+            Pagamento recebido através da chave Pix: {profile.pix}
+          </p>
+        )}
+        <div style={{ textAlign: "right", fontSize: 14, color: "#64748b", marginBottom: 26 }}>
+          {profile.cidade || "________"}, {formatDatePtBR(form.date)}
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginTop: 10 }}>
+          {signature ? (
+            <img src={signature} alt="Assinatura" style={{ height: 54, marginBottom: -6 }} />
+          ) : (
+            <div style={{ height: 54 }} />
+          )}
+          <div style={{ width: 260, borderTop: `1.5px solid #0f172a`, marginTop: 6, paddingTop: 8, textAlign: "center" }}>
+            <div style={{ fontWeight: 700, fontSize: 14 }}>{profile.nome || "________________"}</div>
+            <div style={{ fontFamily: "'Space Mono', monospace", fontSize: 12, color: "#64748b" }}>
+              CPF: {profile.cpf || "___.___.___-__"}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const EMPTY_END = { nome: "", cpf: "", rua: "", numero: "", complemento: "", bairro: "", cidade: "", uf: "", cep: "", pix: "" };
+
+function App() {
+  const [ready, setReady] = useState(false);
+  const [tab, setTab] = useState("etiqueta");
+  
+  const [profile, setProfile] = useState(EMPTY_END);
+  const [profileSavedNote, setProfileSavedNote] = useState("");
+  
+  const [client, setClient] = useState(EMPTY_END);
+  const [rawText, setRawText] = useState("");
+  
+  const [signature, setSignature] = useState(null);
+  const [receipts, setReceipts] = useState([]);
+  const [receiptForm, setReceiptForm] = useState({
+    payerName: "",
+    payerCpf: "",
+    description: "",
+    valueCents: "",
+    date: todayISO(),
+  });
+
+  const [flashMsg, setFlashMsg] = useState("");
+  const [errorMsg, setErrorMsg] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [p, c, sig, rec] = await Promise.allSettled([
+          window.storage.get("user-profile", false),
+          window.storage.get("current-client", false),
+          window.storage.get("signature", false),
+          window.storage.get("receipts", false),
+        ]);
+        if (p.status === "fulfilled" && p.value) setProfile(JSON.parse(p.value.value));
+        if (c.status === "fulfilled" && c.value) {
+          const cliData = JSON.parse(c.value.value);
+          setClient(cliData);
+          setReceiptForm(prev => ({ ...prev, payerName: cliData.nome || "", payerCpf: cliData.cpf || "" }));
+        }
+        if (sig.status === "fulfilled" && sig.value) setSignature(sig.value.value);
+        if (rec.status === "fulfilled" && rec.value) setReceipts(JSON.parse(rec.value.value));
+      } catch (e) {
+      } finally {
+        setReady(true);
+      }
+    })();
+  }, []);
+
+  const saveProfile = useCallback(async (next) => {
+    setProfile(next);
+    try {
+      await window.storage.set("user-profile", JSON.stringify(next), false);
+      setProfileSavedNote("Salvo");
+      setTimeout(() => setProfileSavedNote(""), 1400);
+    } catch (e) {
+      setProfileSavedNote("Erro ao salvar");
+    }
+  }, []);
+
+  const saveClient = useCallback(async (next) => {
+    setClient(next);
+    setReceiptForm((prev) => ({
+      ...prev,
+      payerName: next.nome || "",
+      payerCpf: next.cpf || "",
+    }));
+    try {
+      await window.storage.set("current-client", JSON.stringify(next), false);
+    } catch (e) {}
+  }, []);
+
+  const handleProcessRawText = async () => {
+    if (!rawText.trim()) return;
+    const extracted = parseRawText(rawText);
+    
+    // Se extraiu CEP, busca endereço automaticamente no ViaCEP
+    if (extracted.cep) {
+      const digits = extracted.cep.replace(/\D/g, "");
+      if (digits.length === 8) {
+        try {
+          const resp = await fetch(`https://viacep.com.br/ws/${digits}/json/`);
+          const json = await resp.json();
+          if (!json.erro) {
+            extracted.rua = json.logradouro || extracted.rua;
+            extracted.bairro = json.bairro || extracted.bairro;
+            extracted.cidade = json.localidade || extracted.cidade;
+            extracted.uf = json.uf || extracted.uf;
+          }
+        } catch (e) {}
+      }
+    }
+
+    const next = { ...client, ...extracted };
+    saveClient(next);
+    setRawText("");
+    setFlashMsg("Dados colados e separados com sucesso!");
+    setTimeout(() => setFlashMsg(""), 1800);
+  };
+
+  const saveSignature = useCallback(async (dataUrl) => {
+    setSignature(dataUrl);
+    try {
+      await window.storage.set("signature", dataUrl, false);
+      setFlashMsg("Assinatura salva com sucesso!");
+      setTimeout(() => setFlashMsg(""), 1600);
+    } catch (e) {
+      setErrorMsg("Erro ao salvar assinatura.");
+    }
+  }, []);
+
+  const valorReais = receiptForm.valueCents ? parseInt(receiptForm.valueCents, 10) / 100 : 0;
+
+  const handleGerarRecibo = async () => {
+    setErrorMsg("");
+    if (!profile.nome || !profile.cpf) {
+      setErrorMsg("Preencha seu nome e CPF em seu perfil antes de gerar recibo.");
+      return;
+    }
+    if (!signature) {
+      setErrorMsg("Cadastre sua assinatura na aba Recibo antes de gerar.");
+      return;
+    }
+    if (!receiptForm.payerName || !receiptForm.payerCpf || !receiptForm.description || !valorReais) {
+      setErrorMsg("Preencha nome do pagador, CPF, descrição e valor.");
+      return;
+    }
+
+    const novo = {
+      id: Date.now().toString(36),
+      payerName: receiptForm.payerName,
+      payerCpf: receiptForm.payerCpf,
+      description: receiptForm.description,
+      value: valorReais,
+      date: receiptForm.date,
+      profile: { ...profile },
+      signature,
+      createdAt: new Date().toISOString(),
+    };
+
+    const next = [novo, ...receipts];
+    setReceipts(next);
+    try {
+      await window.storage.set("receipts", JSON.stringify(next), false);
+      setFlashMsg("Recibo gerado e gravado no histórico!");
+      setTimeout(() => setFlashMsg(""), 1800);
+    } catch (e) {
+      setErrorMsg("Recibo gerado, mas falhou ao guardar histórico.");
+    }
+  };
+
+  const handleDeleteReceipt = async (id) => {
+    const next = receipts.filter((r) => r.id !== id);
+    setReceipts(next);
+    try {
+      await window.storage.set("receipts", JSON.stringify(next), false);
+    } catch (e) {}
+  };
+
+  const loadReceiptIntoForm = (r) => {
+    setReceiptForm({
+      payerName: r.payerName,
+      payerCpf: r.payerCpf,
+      description: r.description,
+      valueCents: String(Math.round(r.value * 100)),
+      date: r.date,
+    });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const numeroRecibo = String(receipts.length + 1).padStart(4, "0");
+
+  if (!ready) {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: TOKENS.bg, color: TOKENS.inkMuted, fontFamily: "Inter, sans-serif" }}>
+        Carregando seus dados unificados…
+      </div>
+    );
+  }
+
+  return (
+    <div className="app-wrapper" style={{ minHeight: "100vh", background: TOKENS.bg, fontFamily: "'Inter', sans-serif", color: TOKENS.ink }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Inter:wght@400;500;600;700&display=swap');
+        * { box-sizing: border-box; }
+        input, textarea { font-family: 'Inter', sans-serif; }
+        input:focus, textarea:focus, canvas:focus { outline: 2px solid ${TOKENS.accent}; outline-offset: 1px; }
+        .field-label {
+          font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+          color: ${TOKENS.inkMuted}; font-weight: 600; margin-bottom: 4px; display: block;
+        }
+        .field-input {
+          width: 100%; padding: 9px 11px; border-radius: 6px;
+          border: 1.5px solid ${TOKENS.line}; background: #0f172a;
+          font-size: 14.5px; color: ${TOKENS.ink};
+        }
+        .field-input::placeholder { color: #475569; }
+        .btn-ghost {
+          background: transparent; color: ${TOKENS.inkMuted}; border: 1.5px solid ${TOKENS.line};
+          border-radius: 6px; padding: 10px 16px; font-size: 13.5px; font-weight: 600; cursor: pointer;
+        }
+        .btn-ghost:hover { color: ${TOKENS.ink}; border-color: ${TOKENS.accent}; }
+        .btn-primary {
+          background: ${TOKENS.accent}; color: #0f172a; border: none; border-radius: 6px;
+          padding: 11px 20px; font-size: 13.5px; font-weight: 700; cursor: pointer;
+        }
+        .btn-primary:disabled { opacity: .4; cursor: not-allowed; }
+        .card {
+          background: ${TOKENS.card}; border: 1px solid ${TOKENS.line}; border-radius: 10px; padding: 18px;
+        }
+        .nav-tabs {
+          display: flex; gap: 8px; background: ${TOKENS.card}; padding: 6px; border-radius: 10px;
+          border: 1px solid ${TOKENS.line}; margin-bottom: 20px;
+        }
+        .tab-btn {
+          flex: 1; padding: 10px; border: none; border-radius: 6px; background: transparent;
+          color: ${TOKENS.inkMuted}; font-weight: 600; font-size: 14px; cursor: pointer;
+          transition: all .15s ease;
+        }
+        .tab-btn.active {
+          background: ${TOKENS.accent}; color: #0f172a; font-weight: 700;
+        }
+        .print-only { display: none; }
+        @media print {
+          .screen-only { display: none !important; }
+          .print-only { display: block !important; }
+          .app-wrapper { background: #fff !important; min-height: 0 !important; }
+          html, body { background: #fff !important; }
+          @page { margin: 15mm; }
+        }
+        @media (max-width: 860px) {
+          .layout { grid-template-columns: 1fr !important; }
+        }
+      `}</style>
+
+      <div id="app-chrome" className="screen-only" style={{ maxWidth: 1040, margin: "0 auto", padding: "24px 20px 60px" }}>
+        
+        <header style={{ marginBottom: 18, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
+          <div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: TOKENS.ink }}>EasyMount</div>
+            <div style={{ color: TOKENS.inkMuted, fontSize: 13, marginTop: 2 }}>
+              Gerador integrado de Etiquetas e Recibos
+            </div>
+          </div>
+        </header>
+
+        <nav className="nav-tabs">
+          <button className={`tab-btn ${tab === 'etiqueta' ? 'active' : ''}`} onClick={() => setTab('etiqueta')}>
+            📦 Etiqueta de Correio
+          </button>
+          <button className={`tab-btn ${tab === 'recibo' ? 'active' : ''}`} onClick={() => setTab('recibo')}>
+            📄 Gerador de Recibos
+          </button>
+        </nav>
+
+        {errorMsg && (
+          <div style={{ background: TOKENS.dangerSoft, color: TOKENS.danger, border: `1px solid ${TOKENS.danger}33`, borderRadius: 8, padding: "10px 14px", fontSize: 13.5, marginBottom: 16 }}>
+            {errorMsg}
+          </div>
+        )}
+        {flashMsg && (
+          <div style={{ background: TOKENS.successSoft, color: TOKENS.success, border: `1px solid ${TOKENS.success}33`, borderRadius: 8, padding: "10px 14px", fontSize: 13.5, marginBottom: 16 }}>
+            {flashMsg}
+          </div>
+        )}
+
+        {/* ABA 1: ETIQUETA DE CORREIO */}
+        {tab === "etiqueta" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+            
+            {/* Caixa de Importação de Texto do WhatsApp */}
+            <section className="card" style={{ borderColor: `${TOKENS.accent}55` }}>
+              <div style={{ fontSize: 15, fontWeight: 600, color: TOKENS.accent, marginBottom: 6 }}>
+                ⚡ Colar mensagem do WhatsApp
+              </div>
+              <div style={{ fontSize: 12.5, color: TOKENS.inkMuted, marginBottom: 10 }}>
+                Cole a mensagem recebida contendo Nome, CPF, CEP e Endereço. O app vai extrair e separar tudo nos campos abaixo.
+              </div>
+              <textarea
+                className="field-input"
+                rows={3}
+                value={rawText}
+                onChange={(e) => setRawText(e.target.value)}
+                placeholder="Cole o texto aqui..."
+                style={{ resize: "vertical" }}
+              />
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+                <button className="btn-primary" onClick={handleProcessRawText} type="button" disabled={!rawText.trim()}>
+                  Processar Texto
+                </button>
+              </div>
+            </section>
+
+            <div className="layout" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
+              <section className="card">
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                  <div style={{ fontSize: 15, fontWeight: 600, color: TOKENS.ink }}>Remetente (Seus dados)</div>
+                  <span style={{ fontSize: 11, color: TOKENS.success, minHeight: 14 }}>{profileSavedNote}</span>
+                </div>
+                <EnderecoFields data={profile} onChange={setProfile} onBlur={saveProfile} />
+              </section>
+
+              <section className="card">
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                  <div style={{ fontSize: 15, fontWeight: 600, color: TOKENS.ink }}>Destinatário (Cliente)</div>
+                  <button className="btn-ghost" style={{ padding: "4px 10px", fontSize: 11.5 }} onClick={() => saveClient(EMPTY_END)} type="button">
+                    Limpar
+                  </button>
+                </div>
+                <EnderecoFields data={client} onChange={saveClient} />
+
+                <div style={{ marginTop: 18, borderTop: `1px solid ${TOKENS.line}`, paddingTop: 14, display: "flex", justifyContent: "space-between", gap: 10 }}>
+                  <button className="btn-ghost" style={{ fontSize: 12.5 }} onClick={() => setTab("recibo")} type="button">
+                    Ir para Recibo →
+                  </button>
+                  <button className="btn-primary" onClick={() => window.print()} type="button">
+                    Imprimir etiqueta
+                  </button>
+                </div>
+              </section>
+            </div>
+          </div>
+        )}
+
+        {/* ABA 2: RECIBOS */}
+        {tab === "recibo" && (
+          <div className="layout" style={{ display: "grid", gridTemplateColumns: "380px 1fr", gap: 22, alignItems: "start" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+              
+              <section className="card">
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                  <div style={{ fontSize: 16, fontWeight: 600, color: TOKENS.ink }}>Seus dados (Emitente)</div>
+                  <span style={{ fontSize: 11, color: TOKENS.success, minHeight: 14 }}>{profileSavedNote}</span>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  <div>
+                    <label className="field-label">Seu nome</label>
+                    <input className="field-input" value={profile.nome || ""} onChange={(e) => setProfile({ ...profile, nome: e.target.value })} onBlur={() => saveProfile(profile)} placeholder="Nome completo" />
+                  </div>
+                  <div>
+                    <label className="field-label">Seu CPF</label>
+                    <input className="field-input" value={profile.cpf || ""} onChange={(e) => setProfile({ ...profile, cpf: maskCPF(e.target.value) })} onBlur={() => saveProfile(profile)} placeholder="000.000.000-00" inputMode="numeric" />
+                  </div>
+                  <div>
+                    <label className="field-label">Cidade</label>
+                    <input className="field-input" value={profile.cidade || ""} onChange={(e) => setProfile({ ...profile, cidade: e.target.value })} onBlur={() => saveProfile(profile)} placeholder="Erechim" />
+                  </div>
+                  <div>
+                    <label className="field-label">Chave Pix (opcional)</label>
+                    <input className="field-input" value={profile.pix || ""} onChange={(e) => setProfile({ ...profile, pix: e.target.value })} onBlur={() => saveProfile(profile)} placeholder="CPF, e-mail, telefone..." />
+                  </div>
+                </div>
+              </section>
+
+              <section className="card">
+                <div style={{ fontSize: 16, fontWeight: 600, color: TOKENS.ink, marginBottom: 10 }}>
+                  Sua assinatura
+                </div>
+                <SignaturePad initialDataUrl={signature} onSave={saveSignature} ink="#0f172a" />
+              </section>
+
+              <section className="card">
+                <div style={{ fontSize: 16, fontWeight: 600, color: TOKENS.ink, marginBottom: 12 }}>
+                  Novo recibo
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  <div>
+                    <label className="field-label">Nome do Pagador</label>
+                    <input className="field-input" value={receiptForm.payerName} onChange={(e) => setReceiptForm({ ...receiptForm, payerName: e.target.value })} placeholder="Nome do pagador" />
+                  </div>
+                  <div>
+                    <label className="field-label">CPF do Pagador</label>
+                    <input className="field-input" value={receiptForm.payerCpf} onChange={(e) => setReceiptForm({ ...receiptForm, payerCpf: maskCPF(e.target.value) })} placeholder="000.000.000-00" inputMode="numeric" />
+                  </div>
+                  <div>
+                    <label className="field-label">Produto / serviço</label>
+                    <input className="field-input" value={receiptForm.description} onChange={(e) => setReceiptForm({ ...receiptForm, description: e.target.value })} placeholder="Ex: Suporte iPad" />
+                  </div>
+                  <div>
+                    <label className="field-label">Valor (R$)</label>
+                    <input className="field-input" value={receiptForm.valueCents ? centsToBRL(parseInt(receiptForm.valueCents, 10)) : ""} onChange={(e) => setReceiptForm({ ...receiptForm, valueCents: e.target.value.replace(/\D/g, "") })} placeholder="0,00" inputMode="numeric" />
+                  </div>
+                  <div>
+                    <label className="field-label">Data</label>
+                    <input className="field-input" type="date" value={receiptForm.date} style={{ colorScheme: "dark" }} onChange={(e) => setReceiptForm({ ...receiptForm, date: e.target.value })} />
+                  </div>
+                  <button className="btn-primary" onClick={handleGerarRecibo} type="button" style={{ marginTop: 4 }}>
+                    Gerar e salvar recibo
+                  </button>
+                </div>
+              </section>
+            </div>
+
+            <div>
+              <div className="card" style={{ padding: 0, overflow: "hidden", boxShadow: "0 10px 25px -5px rgba(0,0,0,0.5)" }}>
+                <ReceiptDocument profile={profile} form={receiptForm} signature={signature} numeroRecibo={numeroRecibo} valorReais={valorReais} />
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
+                <button className="btn-ghost" onClick={() => window.print()} type="button">
+                  Imprimir / Salvar como PDF
+                </button>
+              </div>
+
+              {receipts.length > 0 && (
+                <div style={{ marginTop: 30 }}>
+                  <div style={{ fontSize: 16, fontWeight: 600, color: TOKENS.ink, marginBottom: 10 }}>
+                    Recibos anteriores
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {receipts.map((r) => (
+                      <div key={r.id} className="card" style={{ padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ color: TOKENS.ink, fontSize: 13.5, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {r.payerName} — R$ {r.value.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                          </div>
+                          <div style={{ color: TOKENS.inkMuted, fontSize: 12 }}>{r.description} · {formatDatePtBR(r.date)}</div>
+                        </div>
+                        <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                          <button className="btn-ghost" style={{ padding: "6px 10px", fontSize: 12 }} onClick={() => loadReceiptIntoForm(r)} type="button">Reabrir</button>
+                          <button className="btn-ghost" style={{ padding: "6px 10px", fontSize: 12, color: TOKENS.danger, borderColor: `${TOKENS.danger}55` }} onClick={() => handleDeleteReceipt(r.id)} type="button">Excluir</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div id="print-area" className="print-only">
+        {tab === "etiqueta" ? (
+          <div>
+            <EnderecoTexto label="Remetente" data={profile} />
+            <EnderecoTexto label="Destinatário" data={client} />
+          </div>
+        ) : (
+          <ReceiptDocument profile={profile} form={receiptForm} signature={signature} numeroRecibo={numeroRecibo} valorReais={valorReais} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+try {
+  const rootEl = document.getElementById("root");
+  ReactDOM.createRoot(rootEl).render(<App />);
+} catch (err) {
+  const box = document.getElementById("boot-error");
+  if (box) {
+    box.style.display = "block";
+    box.textContent = "Erro de inicialização:\n" + (err && err.message ? err.message : String(err));
+  }
+}
+</script>
+</body>
+</html>
